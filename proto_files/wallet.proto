@@ -5,5 +5,5 @@ option go_package = "models/wallets";
 message Wallet {
   string wallet_id = 1;
   uint64 amount = 2;
-  bool above_threshold = 3;
+  string above_threshold = 3;
 }
