@@ -10,70 +10,104 @@ import (
 	"github.com/lovoo/goka/codec"
 	"log"
 	"strconv"
+	"time"
 )
 
 var (
-	brokers             = []string{"localhost:9092"}
-	topic   goka.Stream = "wallet"
-	group   goka.Group  = "wallet"
+	brokers                    = []string{"localhost:9092"}
+	walletTopic    goka.Stream = "wallet"
+	walletGroup    goka.Group  = "wallet"
+	thresholdTopic goka.Stream = "threshold-test2"
+	thresholdGroup goka.Group  = "threshold-test2"
 
-	tmc  *goka.TopicManagerConfig
-	view *goka.View
+	tmcWallet     *goka.TopicManagerConfig
+	tmcThreshold  *goka.TopicManagerConfig
+	viewWallet    *goka.View
+	viewThreshold *goka.View
+
+	waitTimeInSeconds = 120
 )
 
-func Initialize(initialized chan struct{}) {
-	// This sets the default replication to 1. If you have more then one broker
-	// the default configuration can be used.
-	tmc = goka.NewTopicManagerConfig()
-	tmc.Table.Replication = 1
-	tmc.Stream.Replication = 1
-
+func Initialize() {
 	config := goka.DefaultConfig()
 	// since the emitter only emits one message, we need to tell the processor
 	// to read from the beginning
 	// As the processor is slower to start than the emitter, it would not consume the first
 	// message otherwise.
-	// In production systems however, check whether you really want to read the whole topic on first start, which
+	// In production systems however, check whether you really want to read the whole walletTopic on first start, which
 	// can be a lot of messages.
 	config.Consumer.Offsets.Initial = sarama.OffsetOldest
 	config.Version = sarama.V2_4_0_0
 	goka.ReplaceGlobalConfig(config)
 
-	tm, err := goka.NewTopicManager(brokers, goka.DefaultConfig(), tmc)
+	// This sets the default replication to 1. If you have more then one broker
+	// the default configuration can be used.
+	tmcWallet = goka.NewTopicManagerConfig()
+	tmcWallet.Table.Replication = 1
+	tmcWallet.Stream.Replication = 1
+	tmWallet, err := goka.NewTopicManager(brokers, config, tmcWallet)
 	if err != nil {
-		log.Fatalf("Error creating topic manager: %v", err)
+		log.Fatalf("Error creating walletTopic manager: %v", err)
 	}
-	defer tm.Close()
-	err = tm.EnsureStreamExists(string(topic), 8)
+	defer tmWallet.Close()
+	err = tmWallet.EnsureStreamExists(string(walletTopic), 8)
 	if err != nil {
-		log.Printf("Error creating kafka topic %s: %v", topic, err)
+		log.Printf("Error creating kafka walletTopic %s: %v", walletTopic, err)
 	}
 
-	go runProcessor(initialized) // press ctrl-c to stop
+	go runWalletProcessor() // press ctrl-c to stop
 
-	<-initialized
+	// This sets the default replication to 1. If you have more then one broker
+	// the default configuration can be used.
+	tmcThreshold = goka.NewTopicManagerConfig()
+	tmcThreshold.Table.Replication = 1
+	tmcThreshold.Stream.Replication = 1
+	//tmcThreshold.Stream.Retention = 120000
+	//fmt.Println(time.Duration(5000000000).Seconds())
+	//tmcThreshold.Stream.Retention = time.Duration(5000000000)
+	tmThreshold, err := goka.NewTopicManager(brokers, config, tmcThreshold)
+	if err != nil {
+		log.Fatalf("Error creating walletTopic manager: %v", err)
+	}
+	defer tmThreshold.Close()
+	err = tmThreshold.EnsureStreamExists(string(thresholdTopic), 8)
+	if err != nil {
+		log.Printf("Error creating kafka walletTopic %s: %v", thresholdTopic, err)
+	}
 
-	viewCreated, err := goka.NewView(brokers,
-		goka.GroupTable(group),
+	go runThresholdProcessor()
+
+	viewWalletCreated, err := goka.NewView(brokers,
+		goka.GroupTable(walletGroup),
 		new(codec.String),
 	)
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Println("view initialized")
-	view = viewCreated
+	viewWallet = viewWalletCreated
 
-	view.Run(context.Background())
+	go viewWallet.Run(context.Background())
+
+	viewThresholdCreated, err := goka.NewView(brokers,
+		goka.GroupTable(thresholdGroup),
+		new(codec.String),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	viewThreshold = viewThresholdCreated
+
+	viewThreshold.Run(context.Background())
 }
 
-func onProcessorCallback(ctx goka.Context, msg interface{}) {
+func onWalletProcessorCallback(ctx goka.Context, msg interface{}) {
 	var wallet wallets.Wallet
 	if ctx.Value() == nil {
 		wallet = wallets.Wallet{
-			WalletId:       ctx.Key(),
-			Amount:         0,
-			AboveThreshold: false,
+			WalletId: ctx.Key(),
+			Amount:   0,
 		}
 	} else if val := ctx.Value(); val != nil {
 		proto.Unmarshal([]byte(val.(string)), &wallet)
@@ -85,27 +119,86 @@ func onProcessorCallback(ctx goka.Context, msg interface{}) {
 	ctx.SetValue(string(result))
 }
 
-func runProcessor(initialized chan struct{}) {
-	g := goka.DefineGroup(group,
-		goka.Input(topic, new(codec.String), onProcessorCallback),
+func runWalletProcessor() {
+	g := goka.DefineGroup(walletGroup,
+		goka.Input(walletTopic, new(codec.String), onWalletProcessorCallback),
 		goka.Persist(new(codec.String)),
 	)
 	p, err := goka.NewProcessor(brokers,
 		g,
-		goka.WithTopicManagerBuilder(goka.TopicManagerBuilderWithTopicManagerConfig(tmc)),
+		goka.WithTopicManagerBuilder(goka.TopicManagerBuilderWithTopicManagerConfig(tmcWallet)),
 		goka.WithConsumerGroupBuilder(goka.DefaultConsumerGroupBuilder),
 	)
 	if err != nil {
 		panic(err)
 	}
 
-	close(initialized)
+	p.Run(context.Background())
+}
+
+func onThresholdProcessorCallback(ctx goka.Context, msg interface{}) {
+	var wallet wallets.Wallet
+	if ctx.Value() == nil {
+		wallet = wallets.Wallet{
+			WalletId: ctx.Key(),
+			Amount:   0,
+		}
+	} else if val := ctx.Value(); val != nil {
+		proto.Unmarshal([]byte(val.(string)), &wallet)
+	}
+
+	balance, _ := strconv.ParseInt(msg.(string), 10, 64)
+	wallet.Amount += uint64(balance)
+	result, _ := proto.Marshal(&wallet)
+	ctx.SetValue(string(result))
+
+	if balance > 0 {
+		emitter, err := goka.NewEmitter(brokers, walletTopic, new(codec.String))
+		if err != nil {
+			log.Fatalf("error creating emitter: %v", err)
+		}
+		defer emitter.Finish()
+		err = emitter.EmitSync(ctx.Key(), msg)
+		if err != nil {
+			log.Fatalf("error emitting message: %v", err)
+		}
+
+		timer := time.NewTimer(time.Duration(waitTimeInSeconds) * time.Second)
+		go func() {
+			<-timer.C
+			emitter, err := goka.NewEmitter(brokers, thresholdTopic, new(codec.String))
+			if err != nil {
+				log.Fatalf("error creating emitter: %v", err)
+			}
+			defer emitter.Finish()
+			err = emitter.EmitSync(wallet.WalletId, strconv.Itoa(-int(balance)))
+			if err != nil {
+				log.Fatalf("error emitting message: %v", err)
+			}
+			timer.Stop()
+		}()
+	}
+}
+
+func runThresholdProcessor() {
+	g := goka.DefineGroup(thresholdGroup,
+		goka.Input(thresholdTopic, new(codec.String), onThresholdProcessorCallback),
+		goka.Persist(new(codec.String)),
+	)
+	p, err := goka.NewProcessor(brokers,
+		g,
+		goka.WithTopicManagerBuilder(goka.TopicManagerBuilderWithTopicManagerConfig(tmcThreshold)),
+		goka.WithConsumerGroupBuilder(goka.DefaultConsumerGroupBuilder),
+	)
+	if err != nil {
+		panic(err)
+	}
 
 	p.Run(context.Background())
 }
 
 func Deposit(walletId string, balance uint64) {
-	emitter, err := goka.NewEmitter(brokers, topic, new(codec.String))
+	emitter, err := goka.NewEmitter(brokers, thresholdTopic, new(codec.String))
 	if err != nil {
 		log.Fatalf("error creating emitter: %v", err)
 	}
@@ -117,13 +210,39 @@ func Deposit(walletId string, balance uint64) {
 	log.Println("message emitted")
 }
 
-func GetData(initialized chan struct{}, key string) *wallets.Wallet {
-	value, err := view.Get(key)
+func GetData(key string) *wallets.Wallet {
+	value, err := viewWallet.Get(key)
+	fmt.Println(value)
 	if err != nil {
-		panic(err)
+		return &wallets.Wallet{
+			WalletId:       key,
+			Amount:         0,
+			AboveThreshold: "false",
+		}
 	}
 	var wallet wallets.Wallet
 	proto.Unmarshal([]byte(value.(string)), &wallet)
 
-	return &wallet
+	thresholdValue, thresholdErr := viewThreshold.Get(key)
+	if thresholdErr != nil {
+		return &wallets.Wallet{
+			WalletId:       key,
+			Amount:         0,
+			AboveThreshold: "false",
+		}
+	}
+	var threshold wallets.Wallet
+	proto.Unmarshal([]byte(thresholdValue.(string)), &threshold)
+
+	resultWallet := &wallets.Wallet{
+		WalletId:       wallet.WalletId,
+		Amount:         wallet.Amount,
+		AboveThreshold: "false",
+	}
+
+	if threshold.Amount >= 10000 {
+		resultWallet.AboveThreshold = "true"
+	}
+
+	return resultWallet
 }
