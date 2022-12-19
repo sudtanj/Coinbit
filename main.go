@@ -14,7 +14,7 @@ type DepositPayload struct {
 func main() {
 	// When this example is run the first time, wait for creation of all internal topics (this is done
 	// by goka.NewProcessor)
-	go walletServices.Initialize()
+	walletServices.Initialize()
 
 	r := gin.Default()
 	r.POST("/wallet/:id", func(context *gin.Context) {
