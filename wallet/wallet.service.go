@@ -18,6 +18,8 @@ var (
 	groups    = []goka.Group{"wallet", "threshold"}
 	callbacks = []goka.ProcessCallback{onWalletProcessorCallback, onThresholdProcessorCallback}
 
+	views map[string]*goka.View = map[string]*goka.View{}
+
 	waitTimeInSeconds = 120
 )
 
@@ -59,15 +61,18 @@ func createTopicManagerConfig(config *sarama.Config, topic goka.Stream) *goka.To
 }
 
 func getView(group goka.Group) *goka.View {
-	view, err := goka.NewView(brokers,
-		goka.GroupTable(group),
-		new(codec.String),
-	)
-	if err != nil {
-		panic(err)
+	if views[string(group)] == nil {
+		view, err := goka.NewView(brokers,
+			goka.GroupTable(group),
+			new(codec.String),
+		)
+		if err != nil {
+			panic(err)
+		}
+		views[string(group)] = view
 	}
 
-	return view
+	return views[string(group)]
 }
 
 func runViewBackground(group goka.Group) {
