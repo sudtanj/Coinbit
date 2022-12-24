@@ -16,6 +16,12 @@ Required implementations
             * False if five deposits of 2,000 amount each all within 2 minutes, then after 5 seconds later  another single deposit of 6,000. 
             * True if six deposits of 2,000 amount each all within 2 minutes. 
 
+## High-level diagram using Goka
+![img](https://i.ibb.co/LhMhvSD/image.png)
+## Architecture requirement
+* Use [Goka](https://github.com/lovoo/goka) to build the service above. 
+* Use [protobuf](https://developers.google.com/protocol-buffers/docs/gotutorial) when encoding/decoding payload to/from Kafka broker. 
+* Use Goka's Local storage mechanism, if a database is required. 
 
 
 ## How to run the program 
