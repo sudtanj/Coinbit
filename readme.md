@@ -54,7 +54,7 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
 
 ```
-
+After putting this ﬁle into your code base, run `docker-compose up` to spin-up Kafka broker. Use `docker-compose down` to delete the Kafka cluster. 
 
 ## How to run the program 
 You need to run docker container first using the following command
